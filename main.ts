@@ -1,5 +1,4 @@
-import { App, Notice, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
-
+import { App, Notice, Plugin, PluginSettingTab, Setting, TFile, TFolder, Modal } from 'obsidian';
 // Remember to rename these classes and interfaces!
 
 interface MyPluginSettings {
@@ -104,6 +103,9 @@ export default class MonthlyRecapPlugin extends Plugin {
 	}
 
 	cleanFileContent(content: string): string {
+		// Remove YAML frontmatter
+		content = content.replace(/^---\n[\s\S]*?\n---\n/, '');
+
 		// Remove Dailies block
 		content = content.replace(/# Dailies\s*\n(?:- \[[ x]\] .*\n?)*/g, '');
 
@@ -113,7 +115,7 @@ export default class MonthlyRecapPlugin extends Plugin {
 		// Remove Daily Law block
 		content = content.replace(/# Daily Law\s*\n(?:- \[[ x]\] .*\n?)*/g, '');
 
-		return content;
+		return content.trim(); // Trim any leading/trailing whitespace
 	}
 
 	checkAutoGenerate() {
@@ -148,6 +150,15 @@ class MonthlyRecapSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.inputFolder = value;
 					await this.plugin.saveSettings();
+				}))
+			.addButton(button => button
+				.setButtonText('Choose Directory')
+				.onClick(() => {
+					new FolderSuggestModal(this.app, (folder) => {
+						this.plugin.settings.inputFolder = folder.path;
+						this.plugin.saveSettings();
+						this.display();
+					}).open();
 				}));
 
 		new Setting(containerEl)
@@ -159,6 +170,15 @@ class MonthlyRecapSettingTab extends PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.outputFolder = value;
 					await this.plugin.saveSettings();
+				}))
+			.addButton(button => button
+				.setButtonText('Choose Directory')
+				.onClick(() => {
+					new FolderSuggestModal(this.app, (folder) => {
+						this.plugin.settings.outputFolder = folder.path;
+						this.plugin.saveSettings();
+						this.display();
+					}).open();
 				}));
 
 		new Setting(containerEl)
@@ -170,5 +190,42 @@ class MonthlyRecapSettingTab extends PluginSettingTab {
 					this.plugin.settings.autoGenerate = value;
 					await this.plugin.saveSettings();
 				}));
+	}
+}
+
+class FolderSuggestModal extends Modal {
+	private result: (folder: TFolder) => void;
+	private input: HTMLInputElement;
+
+	constructor(app: App, onChoose: (folder: TFolder) => void) {
+		super(app);
+		this.result = onChoose;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.createEl("h2", { text: "Choose a folder" });
+
+		this.input = contentEl.createEl("input", {
+			type: "text",
+			value: ""
+		});
+
+		const folderList = contentEl.createEl("ul");
+		const folders = this.app.vault.getAllLoadedFiles().filter(f => f instanceof TFolder) as TFolder[];
+
+		folders.forEach(folder => {
+			const item = folderList.createEl("li");
+			item.setText(folder.path);
+			item.onClickEvent(() => {
+				this.result(folder);
+				this.close();
+			});
+		});
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
 	}
 }
