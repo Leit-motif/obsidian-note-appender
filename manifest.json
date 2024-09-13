@@ -1,9 +1,9 @@
 {
-	"id": "a-monthly-recap-plugin",
-	"name": "a-monthly-recap-plugin",
+	"id": "a-recap-plugin",
+	"name": "a-recap-plugin",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
+	"description": "A plugin for generating monthly and weekly recaps.",
 	"author": "Obsidian",
 	"authorUrl": "https://obsidian.md",
 	"fundingUrl": "https://obsidian.md/pricing",
