@@ -10,6 +10,10 @@ interface MyPluginSettings {
     autoGenerateWeekly: boolean;
     useGPTSummary: boolean;
     gptApiKey: string;
+    gptModel: '4o' | '4o-mini' | 'o1-preview' | 'o1-mini';
+    gptInputFolder: string;
+    gptOutputFolder: string;
+    gptSummarizeOnlyPrevious: boolean;
 }
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
@@ -20,7 +24,11 @@ const DEFAULT_SETTINGS: MyPluginSettings = {
     weeklyOutputFolder: '5.0 Journal/5.2 Weekly',
     autoGenerateWeekly: false,
     useGPTSummary: false,
-    gptApiKey: ''
+    gptApiKey: '',
+    gptModel: 'o1-mini',
+    gptInputFolder: '5.0 Journal/5.2 Weekly',
+    gptOutputFolder: '5.0 Journal/5.4 GPT Summaries',
+    gptSummarizeOnlyPrevious: true,
 };
 
 export default class MonthlyRecapPlugin extends Plugin {
@@ -45,6 +53,12 @@ export default class MonthlyRecapPlugin extends Plugin {
             id: 'generate-weekly-recap',
             name: 'Generate Weekly Recap',
             callback: () => this.generateWeeklyRecap(),
+        });
+
+        this.addCommand({
+            id: 'generate-gpt-summaries',
+            name: 'Generate GPT Summaries',
+            callback: () => this.generateGPTSummaries(),
         });
 
         // Add settings tab
@@ -202,7 +216,7 @@ export default class MonthlyRecapPlugin extends Plugin {
                     'Authorization': `Bearer ${apiKey}`
                 },
                 body: JSON.stringify({
-                    model: "gpt-3.5-turbo",
+                    model: this.settings.gptModel,
                     messages: [
                         {
                             role: "system",
@@ -227,6 +241,48 @@ export default class MonthlyRecapPlugin extends Plugin {
             new Notice('Error generating GPT summary. Check console for details.');
             return content;
         }
+    }
+
+    async generateGPTSummaries() {
+        const vault = this.app.vault;
+        const inputFolder = this.settings.gptInputFolder;
+        const outputFolder = this.settings.gptOutputFolder;
+
+        // Get all input files
+        const inputFiles = vault.getFiles().filter(
+            file => file.path.startsWith(inputFolder) && file.extension === 'md'
+        );
+
+        for (const file of inputFiles) {
+            if (this.settings.gptSummarizeOnlyPrevious) {
+                // Check if the file is from the previous week or month
+                const fileDate = this.getDateFromFileName(file.name);
+                if (!this.isFromPreviousPeriod(fileDate)) {
+                    continue;
+                }
+            }
+
+            const content = await vault.read(file);
+            const summary = await this.generateGPTSummary(content);
+
+            const outputFileName = `GPT_Summary_${file.name}`;
+            const outputFilePath = `${outputFolder}/${outputFileName}`;
+
+            await vault.create(outputFilePath, summary);
+        }
+    }
+
+    getDateFromFileName(fileName: string): Date | null {
+        const match = fileName.match(/^(\d{4}-\d{2}-\d{2})/);
+        return match ? new Date(match[1]) : null;
+    }
+
+    isFromPreviousPeriod(date: Date | null): boolean {
+        if (!date) return false;
+        const now = new Date();
+        const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+        return date >= oneWeekAgo || (date.getMonth() === oneMonthAgo.getMonth() && date.getFullYear() === oneMonthAgo.getFullYear());
     }
 
     checkAutoGenerate() {
@@ -365,11 +421,21 @@ class MonthlyRecapSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('Auto Generate Weekly')
-            .setDesc('Automatically generate recap for the previous week on Sunday')
+            .setDesc('Automatically generate weekly recap on Sundays')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.autoGenerateWeekly)
                 .onChange(async (value) => {
                     this.plugin.settings.autoGenerateWeekly = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Use GPT Summary')
+            .setDesc('Use GPT to generate summaries for weekly recaps')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.useGPTSummary)
+                .onChange(async (value) => {
+                    this.plugin.settings.useGPTSummary = value;
                     await this.plugin.saveSettings();
                 }));
 
@@ -380,24 +446,90 @@ class MonthlyRecapSettingTab extends PluginSettingTab {
                 .setButtonText('Generate')
                 .onClick(async () => {
                     await this.plugin.generateWeeklyRecap();
-                    new Notice('Weekly recap generated successfully!');
+                    new Notice('Weekly recaps generated successfully!');
                 }));
 
         containerEl.createEl('h2', { text: 'GPT Summary Settings' });
 
         new Setting(containerEl)
-            .setName('Use GPT Summary')
-            .setDesc('Generate a summary of the weekly recap using GPT')
-            .addToggle(toggle => toggle
-                .setValue(this.plugin.settings.useGPTSummary)
-                .onChange(async (value) => {
-                    this.plugin.settings.useGPTSummary = value;
+            .setName('GPT Model')
+            .setDesc('Select the GPT model to use for summaries')
+            .addDropdown(dropdown => dropdown
+                .addOptions({
+                    '4o': 'GPT-4 Optimized',
+                    '4o-mini': 'GPT-4 Optimized Mini',
+                    'o1-preview': 'OpenAI-1 Preview',
+                    'o1-mini': 'OpenAI-1 Mini'
+                })
+                .setValue(this.plugin.settings.gptModel)
+                .onChange(async (value: '4o' | '4o-mini' | 'o1-preview' | 'o1-mini') => {
+                    this.plugin.settings.gptModel = value;
                     await this.plugin.saveSettings();
                 }));
 
         new Setting(containerEl)
+            .setName('GPT Input Folder')
+            .setDesc('Folder path for input files to summarize')
+            .addText(text => text
+                .setPlaceholder('Example: folder1/folder2')
+                .setValue(this.plugin.settings.gptInputFolder)
+                .onChange(async (value) => {
+                    this.plugin.settings.gptInputFolder = value;
+                    await this.plugin.saveSettings();
+                }))
+            .addButton(button => button
+                .setButtonText('Choose Directory')
+                .onClick(() => {
+                    new FolderSuggestModal(this.app, folder => {
+                        this.plugin.settings.gptInputFolder = folder.path;
+                        this.plugin.saveSettings();
+                        this.display();
+                    }).open();
+                }));
+
+        new Setting(containerEl)
+            .setName('GPT Output Folder')
+            .setDesc('Folder path for GPT summary output')
+            .addText(text => text
+                .setPlaceholder('Example: folder1/folder2')
+                .setValue(this.plugin.settings.gptOutputFolder)
+                .onChange(async (value) => {
+                    this.plugin.settings.gptOutputFolder = value;
+                    await this.plugin.saveSettings();
+                }))
+            .addButton(button => button
+                .setButtonText('Choose Directory')
+                .onClick(() => {
+                    new FolderSuggestModal(this.app, folder => {
+                        this.plugin.settings.gptOutputFolder = folder.path;
+                        this.plugin.saveSettings();
+                        this.display();
+                    }).open();
+                }));
+
+        new Setting(containerEl)
+            .setName('Summarize Only Previous Week/Month')
+            .setDesc('Generate summaries only for the previous week and month')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.gptSummarizeOnlyPrevious)
+                .onChange(async (value) => {
+                    this.plugin.settings.gptSummarizeOnlyPrevious = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Generate GPT Summaries')
+            .setDesc('Generate GPT summaries for weekly and monthly notes')
+            .addButton(button => button
+                .setButtonText('Generate')
+                .onClick(async () => {
+                    await this.plugin.generateGPTSummaries();
+                    new Notice('GPT summaries generated successfully!');
+                }));
+
+        new Setting(containerEl)
             .setName('GPT API Key')
-            .setDesc('Your OpenAI API key')
+            .setDesc('API key for OpenAI GPT')
             .addText(text => text
                 .setPlaceholder('Enter your API key')
                 .setValue(this.plugin.settings.gptApiKey)
