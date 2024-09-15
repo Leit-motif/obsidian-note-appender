@@ -10,7 +10,7 @@ interface MyPluginSettings {
     autoGenerateWeekly: boolean;
     useGPTSummary: boolean;
     gptApiKey: string;
-    gptModel: '4o' | '4o-mini' | 'o1-preview' | 'o1-mini';
+    gptModel: 'gpt-4o' | 'gpt-4o-mini' | 'o1-preview' | 'o1-mini';
     gptInputFolder: string;
     gptOutputFolder: string;
     gptSummarizeOnlyPrevious: boolean;
@@ -25,7 +25,7 @@ const DEFAULT_SETTINGS: MyPluginSettings = {
     autoGenerateWeekly: false,
     useGPTSummary: false,
     gptApiKey: '',
-    gptModel: 'o1-mini',
+    gptModel: 'gpt-4o-mini',
     gptInputFolder: '5.0 Journal/5.2 Weekly',
     gptOutputFolder: '5.0 Journal/5.4 GPT Summaries',
     gptSummarizeOnlyPrevious: true,
@@ -230,6 +230,12 @@ export default class MonthlyRecapPlugin extends Plugin {
                 })
             });
 
+            if (!response.ok) {
+                const errorData = await response.json();
+                console.error('API Error Response:', errorData);
+                throw new Error(`API Error: ${errorData.error.message}`);
+            }
+
             const data = await response.json();
             if (data.choices && data.choices.length > 0) {
                 return data.choices[0].message.content;
@@ -238,7 +244,7 @@ export default class MonthlyRecapPlugin extends Plugin {
             }
         } catch (error) {
             console.error('Error generating GPT summary:', error);
-            new Notice('Error generating GPT summary. Check console for details.');
+            new Notice(`Error generating GPT summary: ${error.message}`);
             return content;
         }
     }
@@ -253,23 +259,60 @@ export default class MonthlyRecapPlugin extends Plugin {
             file => file.path.startsWith(inputFolder) && file.extension === 'md'
         );
 
+        // Sort files by date
+        inputFiles.sort((a, b) => a.name.localeCompare(b.name));
+
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth();
+        const currentWeek = getWeek(now);
+
+        let weeklyContent = '';
+        let monthlyContent = '';
+
         for (const file of inputFiles) {
-            if (this.settings.gptSummarizeOnlyPrevious) {
-                // Check if the file is from the previous week or month
-                const fileDate = this.getDateFromFileName(file.name);
-                if (!this.isFromPreviousPeriod(fileDate)) {
-                    continue;
-                }
-            }
+            const fileDate = this.getDateFromFileName(file.name);
+            if (!fileDate) continue;
 
             const content = await vault.read(file);
-            const summary = await this.generateGPTSummary(content);
+            const fileWeek = getWeek(fileDate);
+            const fileMonth = fileDate.getMonth();
+            const fileYear = fileDate.getFullYear();
 
-            const outputFileName = `GPT_Summary_${file.name}`;
-            const outputFilePath = `${outputFolder}/${outputFileName}`;
+            // Collect content for the most recent completed week
+            if (fileYear === currentYear && fileWeek === currentWeek - 1) {
+                weeklyContent += content + '\n\n';
+            }
 
-            await vault.create(outputFilePath, summary);
+            // Collect content for the most recent completed month
+            if (fileYear === currentYear && fileMonth === currentMonth - 1) {
+                monthlyContent += content + '\n\n';
+            }
         }
+
+        // Generate and save weekly summary
+        if (weeklyContent) {
+            await this.generateAndSaveSummary(weeklyContent, 'Weekly', currentWeek - 1, currentYear, outputFolder);
+        }
+
+        // Generate and save monthly summary
+        if (monthlyContent) {
+            await this.generateAndSaveSummary(monthlyContent, 'Monthly', currentMonth - 1, currentYear, outputFolder);
+        }
+
+        new Notice('GPT summaries generated successfully!');
+    }
+
+    async generateAndSaveSummary(content: string, type: 'Weekly' | 'Monthly', period: number, year: number, outputFolder: string) {
+        const summary = await this.generateGPTSummary(content);
+        let fileName: string;
+        if (type === 'Weekly') {
+            fileName = `${year}-W${String(period).padStart(2, '0')} Summary.md`;
+        } else {
+            fileName = `${year}-${String(period + 1).padStart(2, '0')} Summary.md`;
+        }
+        const filePath = `${outputFolder}/${fileName}`;
+        await this.app.vault.create(filePath, summary);
     }
 
     getDateFromFileName(fileName: string): Date | null {
@@ -456,14 +499,14 @@ class MonthlyRecapSettingTab extends PluginSettingTab {
             .setDesc('Select the GPT model to use for summaries')
             .addDropdown(dropdown => dropdown
                 .addOptions({
-                    '4o': 'GPT-4 Optimized',
-                    '4o-mini': 'GPT-4 Optimized Mini',
-                    'o1-preview': 'OpenAI-1 Preview',
-                    'o1-mini': 'OpenAI-1 Mini'
+                    'gpt-4o': 'gpt-4o',
+                    'gpt-4o-mini': 'gpt-4o-mini',
+                    'o1-preview': 'o1-preview',
+                    'o1-mini': 'o1-mini'
                 })
                 .setValue(this.plugin.settings.gptModel)
-                .onChange(async (value: '4o' | '4o-mini' | 'o1-preview' | 'o1-mini') => {
-                    this.plugin.settings.gptModel = value;
+                .onChange(async (value) => {
+                    this.plugin.settings.gptModel = value as 'gpt-4o' | 'gpt-4o-mini' | 'o1-preview' | 'o1-mini';
                     await this.plugin.saveSettings();
                 }));
 
