@@ -291,9 +291,10 @@ export default class MonthlyRecapPlugin extends Plugin {
             const fileName = `${previousWeekYear}-W${String(previousWeek).padStart(2, '0')} Summary.md`;
             const filePath = `${outputFolder}/${fileName}`;
             await this.app.vault.create(filePath, summary);
+            new Notice('GPT weekly summary generated successfully!');
+        } else {
+            new Notice('No content found for the previous week.');
         }
-
-        new Notice('GPT weekly summary generated successfully!');
     }
 
     async generateAndSaveSummary(content: string, type: string, period: number, year: number, outputFolder: string) {
